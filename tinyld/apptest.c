@@ -29,24 +29,37 @@ int main(int argc, char **argv)
 		return -1;
 	}
     //test for drx
+    /*
 	drx.dr0 = 0x10;
     drx.endr0 = 1;
 	drx.dr7 = 0xc2402;
     drx.endr7 = 1;
     ioctl(dfd,TINYLD_DR_WRITE,&drx);
-    
+    */
+
     //test for rdmsr wrmsr
+    /*
     msr.ecx = 0x199;
     ioctl(dfd,TINYLD_RDMSR,&msr);
+    */
     
+    msr.ecx = 0x160c;
+    ioctl(dfd,TINYLD_RDMSR,&msr);
     // test for io
     io.io = 0x80;
-    io.data = 0x55;
+    io.data = 0x66;
     ioctl(dfd,TINYLD_IOWB, &io);
 
     //test for iomem
-    iomem.iomem = 0x00000054;
+    
+    iomem.iomem = 0x100000010;
     ioctl(dfd,TINYLD_IOMEMRB, &iomem);
+    
+    
+    ioctl(dfd,TINYLD_CHX002_FSBC_DUMP_IOMEM,NULL);
+    
+    msr.ecx = 0x160c;
+    ioctl(dfd, TINYLD_RDMSR,&msr);
     close(dfd);
     return 0;
 }

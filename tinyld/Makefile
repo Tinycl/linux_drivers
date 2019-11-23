@@ -4,6 +4,6 @@ PWD := $(shell pwd)
 all:
 	make -C $(KERNEL_DIR) SUBDIRS=$(PWD) modules
 clean:
-	rm *.o *.ko *.mod.c *.order *.symvers *.o.ur-safe
+	rm -f *.o *.ko *.mod.c *.order *.symvers *.swn *.swo *.swp *.cmd *.mk 
 
 .PHONY:clean
