@@ -11,13 +11,17 @@
 #include <linux/device.h>
 #include <linux/errno.h>
 #include <asm/page.h>
-//#include <asm/uaccess.h>
-#include <linux/uaccess.h>
 #include <asm-generic/ioctl.h>
 
 #include <asm/msr.h> 
 #include <linux/kthread.h>
 
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,15,0)
+#include <linux/uaccess.h>
+#else
+#include <asm/uaccess.h>
+#endif
 #include "tinyld.h"
 
 MODULE_AUTHOR("Tiny");
