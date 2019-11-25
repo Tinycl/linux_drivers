@@ -14,6 +14,15 @@
 #define __USE_GNU
 #include <sched.h>
 
+void cpuid_helper(unsigned int eax, unsigned int ecx, unsigned int *pbuffer)
+{
+	unsigned int oeax, oebx, oecx, oedx;
+	__asm__ volatile("cpuid": "=a"(oeax), "=b"(oebx), "=c"(oecx), "=d"(oedx) : "a"(eax), "c"(ecx));
+	*pbuffer = oeax;
+	*(pbuffer + 1) = oebx;
+	*(pbuffer + 2) = oecx;
+	*(pbuffer + 3) = oedx;
+}
 int main(int argc, char **argv)
 {
 	struct ST_DRX_REGISTER drx;
@@ -28,11 +37,11 @@ int main(int argc, char **argv)
 		printf("tinyld driver load fail \n");
 		return -1;
 	}
-    //test for drx
+    //test for drx  when EIP = 0
     /*
-	drx.dr0 = 0x10;
+	drx.dr0 = 0x0;
     drx.endr0 = 1;
-	drx.dr7 = 0xc2402;
+	drx.dr7 = 0x402;
     drx.endr7 = 1;
     ioctl(dfd,TINYLD_DR_WRITE,&drx);
     */
