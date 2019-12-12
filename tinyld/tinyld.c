@@ -11,17 +11,19 @@
 #include <linux/device.h>
 #include <linux/errno.h>
 #include <asm/page.h>
+//#include <asm/uaccess.h>
+//#include <linux/uaccess.h>
+#include <linux/version.h>
 #include <asm-generic/ioctl.h>
-
 #include <asm/msr.h> 
 #include <linux/kthread.h>
 
-#include <linux/version.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,15,0)
 #include <linux/uaccess.h>
 #else
 #include <asm/uaccess.h>
 #endif
+
 #include "tinyld.h"
 
 MODULE_AUTHOR("Tiny");
@@ -182,74 +184,102 @@ static int helper_fsbc_dump_kthreadfun(void *arg)
     }
     printk("fsbc dump mem start!\n");
     iomem_end_addr = gfsbcconfig.base_iomem_addr + gfsbcconfig.buffersize * 1024 * 1024; // dump end address = base + buffer size
-	if(gfsbcconfig.iswrap)
+	//must triger mode not stream mode
+	if(gfsbcconfig.position == 0)  //snapshot mode
 	{
-		printk("fsbc is wrap\n");
-        iomem_first_base_addr = gfsbcconfig.trigger_iomem_addr + 0x100000; //bug? need + 0x100000
-        iomem_second_base_addr = gfsbcconfig.base_iomem_addr;
-        iomem_third_base_addr =  gfsbcconfig.wrap_iomem_addr;
-        first_len = iomem_third_base_addr - iomem_first_base_addr;
-        second_len = iomem_first_base_addr - iomem_second_base_addr;
-		third_len = iomem_end_addr -  iomem_third_base_addr;
-    	vir_first_base_addr = ioremap_nocache(iomem_first_base_addr, first_len);  // ioremap ioremap_cache   ioremap_nocache
-        vir_second_base_addr = ioremap_nocache(iomem_second_base_addr, second_len);
-    	vir_third_base_addr = ioremap_nocache(iomem_third_base_addr, third_len);
-        oldfs = get_fs();
-	    set_fs(get_ds()); // use kernel address KERNEL_DS
-	    fp = filp_open("/home/mem.bin", O_RDWR | O_CREAT, 0644);
-	    if(IS_ERR(fp))
-    	{
-		    err = PTR_ERR(fp);
-		    printk("filp_open dump file fail\n");
-		    return 1;
-    	}
-        offset = 0;
-        printk("fsbc dump first segment 0x%llx ~ 0x%llx\n", iomem_first_base_addr, iomem_third_base_addr);
-	    vfs_write(fp,(unsigned char*)vir_first_base_addr, first_len*sizeof(char), &offset);
-        offset += first_len;
-        printk("fsbc dump second segment 0x%llx ~ 0x%llx\n", iomem_second_base_addr, iomem_first_base_addr);
-	    vfs_write(fp,(unsigned char*)vir_second_base_addr, second_len*sizeof(char), &offset);
-	    offset += second_len;
-        printk("fsbc dump third segment 0x%llx ~ 0x%llx\n", iomem_third_base_addr, iomem_end_addr);
-	    vfs_write(fp,(unsigned char*)vir_third_base_addr, third_len*sizeof(char), &offset);
-	    filp_close(fp, NULL);
-	    set_fs(oldfs);
-	    iounmap(vir_first_base_addr);
-	    iounmap(vir_second_base_addr);
-	    iounmap(vir_third_base_addr);
-        printk("fsbc dump memory finish, dump size is %lld M!\n", (first_len + second_len + third_len)/1024/1024); 
+		iomem_first_base_addr = gfsbcconfig.base_iomem_addr;
+		first_len = iomem_end_addr - iomem_first_base_addr;
+		vir_first_base_addr = ioremap_nocache(iomem_first_base_addr, first_len); 
+		oldfs = get_fs();
+		set_fs(get_ds()); // use kernel address KERNEL_DS
+		fp = filp_open("/home/mem.bin", O_RDWR | O_CREAT, 0644);
+		if(IS_ERR(fp))
+		{
+			err = PTR_ERR(fp);
+			printk("filp_open dump file fail\n");
+			return 1;
+		}
+		offset = 0;
+		printk("fsbc dump snapshot segment 0x%llx ~ 0x%llx\n", iomem_first_base_addr, iomem_end_addr);
+		vfs_write(fp,(unsigned char*)vir_first_base_addr, first_len*sizeof(char), &offset);
+		filp_close(fp, NULL);
+		set_fs(oldfs);
+		iounmap(vir_first_base_addr);
+		printk("fsbc dump memory finish, dump size is %lld M\n", first_len/1024/1024);
 	}
-    else
-    {
-        printk("fsbc is not wrap\n");
-        iomem_first_base_addr = gfsbcconfig.base_iomem_addr;
-        iomem_second_base_addr = gfsbcconfig.trigger_iomem_addr + 0x100000; //fsbc design bug?
-        iomem_third_base_addr = gfsbcconfig.wrap_iomem_addr;
-        first_len = iomem_second_base_addr - iomem_first_base_addr;
-        second_len = iomem_end_addr - iomem_third_base_addr;
-        vir_first_base_addr = ioremap_nocache(iomem_first_base_addr, first_len);
-        vir_second_base_addr = ioremap_nocache(iomem_third_base_addr, second_len);
-        oldfs = get_fs();
-        set_fs(get_ds());
-        fp = filp_open("/home/mem.bin", O_RDWR | O_CREAT, 0644);
-        if(IS_ERR(fp))
-        {
-            err = PTR_ERR(fp);
-            printk("filp_open dump file fail\n");
-            return 1;
-        }
-        offset = 0;
-        printk("fsbc dump first segment 0x%llx ~ 0x%llx\n", iomem_first_base_addr, iomem_second_base_addr);
-        vfs_write(fp, (unsigned char*)vir_first_base_addr, first_len*sizeof(char), &offset);
-        offset += first_len;
-        printk("fsbc dump second segmeng 0x%llx ~ 0x%llx\n", iomem_third_base_addr, iomem_end_addr);
-        vfs_write(fp, (unsigned char*)vir_second_base_addr, second_len*sizeof(char), &offset);
-        filp_close(fp, NULL);
-        set_fs(oldfs);
-        iounmap(vir_first_base_addr);
-        iounmap(vir_second_base_addr);
-        printk("fsbc dump memory finish, dump size is %lld M\n", (first_len + second_len)/1024/1024);
-    }
+	else
+	{
+		if(gfsbcconfig.iswrap)
+		{
+			printk("fsbc is wrap\n");
+			iomem_first_base_addr = gfsbcconfig.trigger_iomem_addr + 0x100000; //bug? need + 0x100000
+			iomem_second_base_addr = gfsbcconfig.base_iomem_addr;
+			iomem_third_base_addr =  gfsbcconfig.wrap_iomem_addr;
+			first_len = iomem_third_base_addr - iomem_first_base_addr;
+			second_len = iomem_first_base_addr - iomem_second_base_addr;
+			third_len = iomem_end_addr -  iomem_third_base_addr;
+			vir_first_base_addr = ioremap_nocache(iomem_first_base_addr, first_len);  // ioremap ioremap_cache   ioremap_nocache
+			vir_second_base_addr = ioremap_nocache(iomem_second_base_addr, second_len);
+			vir_third_base_addr = ioremap_nocache(iomem_third_base_addr, third_len);
+			oldfs = get_fs();
+			set_fs(get_ds()); // use kernel address KERNEL_DS
+			fp = filp_open("/home/mem.bin", O_RDWR | O_CREAT, 0644);
+			if(IS_ERR(fp))
+			{
+				err = PTR_ERR(fp);
+				printk("filp_open dump file fail\n");
+				return 1;
+			}
+			offset = 0;
+			printk("fsbc dump first segment 0x%llx ~ 0x%llx\n", iomem_first_base_addr, iomem_third_base_addr);
+			vfs_write(fp,(unsigned char*)vir_first_base_addr, first_len*sizeof(char), &offset);
+			offset += first_len;
+			printk("fsbc dump second segment 0x%llx ~ 0x%llx\n", iomem_second_base_addr, iomem_first_base_addr);
+			vfs_write(fp,(unsigned char*)vir_second_base_addr, second_len*sizeof(char), &offset);
+			offset += second_len;
+			printk("fsbc dump third segment 0x%llx ~ 0x%llx\n", iomem_third_base_addr, iomem_end_addr);
+			vfs_write(fp,(unsigned char*)vir_third_base_addr, third_len*sizeof(char), &offset);
+			filp_close(fp, NULL);
+			set_fs(oldfs);
+			iounmap(vir_first_base_addr);
+			iounmap(vir_second_base_addr);
+			iounmap(vir_third_base_addr);
+			printk("fsbc dump memory finish, dump size is %lld M!\n", (first_len + second_len + third_len)/1024/1024); 
+		}
+		else
+		{
+			printk("fsbc is not wrap\n");
+			iomem_first_base_addr = gfsbcconfig.base_iomem_addr;
+			iomem_second_base_addr = gfsbcconfig.trigger_iomem_addr + 0x100000; //fsbc design bug?
+			iomem_third_base_addr = gfsbcconfig.wrap_iomem_addr;
+			first_len = iomem_second_base_addr - iomem_first_base_addr;
+			second_len = iomem_end_addr - iomem_third_base_addr;
+			vir_first_base_addr = ioremap_nocache(iomem_first_base_addr, first_len);
+			vir_second_base_addr = ioremap_nocache(iomem_third_base_addr, second_len);
+			oldfs = get_fs();
+			set_fs(get_ds());
+			fp = filp_open("/home/mem.bin", O_RDWR | O_CREAT, 0644);
+			if(IS_ERR(fp))
+			{
+				err = PTR_ERR(fp);
+				printk("filp_open dump file fail\n");
+				return 1;
+			}
+			offset = 0;
+			printk("fsbc dump first segment 0x%llx ~ 0x%llx\n", iomem_first_base_addr, iomem_second_base_addr);
+			vfs_write(fp, (unsigned char*)vir_first_base_addr, first_len*sizeof(char), &offset);
+			offset += first_len;
+			printk("fsbc dump second segmeng 0x%llx ~ 0x%llx\n", iomem_third_base_addr, iomem_end_addr);
+			vfs_write(fp, (unsigned char*)vir_second_base_addr, second_len*sizeof(char), &offset);
+			filp_close(fp, NULL);
+			set_fs(oldfs);
+			iounmap(vir_first_base_addr);
+			iounmap(vir_second_base_addr);
+			printk("fsbc dump memory finish, dump size is %lld M\n", (first_len + second_len)/1024/1024);
+		}			
+	}
+	
+
 	
 	/*
 	while(!kthread_should_stop())
