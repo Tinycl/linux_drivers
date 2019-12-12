@@ -204,10 +204,10 @@ static int helper_fsbc_dump_kthreadfun(void *arg)
 		    return 1;
     	}
         offset = 0;
-        printk("fsbc dump first segment 0x%llx ~ 0x%llx\n", iomem_third_base_addr, iomem_second_base_addr);
+        printk("fsbc dump first segment 0x%llx ~ 0x%llx\n", iomem_first_base_addr, iomem_third_base_addr);
 	    vfs_write(fp,(unsigned char*)vir_first_base_addr, first_len*sizeof(char), &offset);
         offset += first_len;
-        printk("fsbc dump second segment 0x%llx ~ 0x%llx\n", iomem_second_base_addr, iomem_third_base_addr);
+        printk("fsbc dump second segment 0x%llx ~ 0x%llx\n", iomem_second_base_addr, iomem_first_base_addr);
 	    vfs_write(fp,(unsigned char*)vir_second_base_addr, second_len*sizeof(char), &offset);
 	    offset += second_len;
         printk("fsbc dump third segment 0x%llx ~ 0x%llx\n", iomem_third_base_addr, iomem_end_addr);
