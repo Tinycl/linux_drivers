@@ -1,27 +1,6 @@
 (1) read and write DRx register
 (2) read and write IO
 (3) read and write physical address
-(4) support fsbc dump
-    a. bios disable DRAMC interleave
-    b. bios enable  fsbc
-    such as : io 80 write 66,  buffersize=512M, trigger position 75% 100000000
-    wrmsr 0x1604 0x00000000 0x00000066
-    wrmsr 0x1605 0x00000000 0x00000000
-    wrmsr 0x1606 0x00000000 0x00000000
-    wrmsr 0x1607 0x00000000 0x00000000
-    wrmsr 0x1608 0x00000000 0x000000fe
-    wrmsr 0x160a 0x00000000 0x00000000
-    wrmsr 0x160b 0x10046101 0x00000000
-    wrmsr 0x1609 0x00000000 0x80008007
-    
-    such as : snapshot mode triger 256M  100000000
-    wrmsr 0x1604 0x00000000 0x00000000
-    wrmsr 0x1605 0x00000000 0x00000000
-    wrmsr 0x1606 0x00000000 0x00000000
-    wrmsr 0x1607 0x00000000 0x00000000
-    wrmsr 0x1608 0x00000000 0x00000000
-    wrmsr 0x160a 0x00000000 0x00000000
-    wrmsr 0x160b 0x00000001 0x00000000
-    wrmsr 0x1609 0x00000000 0x00008007
+
     
     
