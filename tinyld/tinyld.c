@@ -17,6 +17,7 @@
 #include <asm-generic/ioctl.h>
 #include <asm/msr.h> 
 #include <linux/kthread.h>
+#include <asm/io.h>
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,15,0)
 #include <linux/uaccess.h>
