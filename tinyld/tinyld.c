@@ -11,19 +11,19 @@
 #include <linux/device.h>
 #include <linux/errno.h>
 #include <asm/page.h>
-//#include <asm/uaccess.h>
-//#include <linux/uaccess.h>
 #include <linux/version.h>
 #include <asm-generic/ioctl.h>
-#include <asm/msr.h> 
+#include <asm/msr.h>
+ 
 #include <linux/kthread.h>
-#include <asm/io.h>
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,15,0)
 #include <linux/uaccess.h>
+#include <asm/io.h>
 #else
 #include <asm/uaccess.h>
 #endif
+
 
 #include "tinyld.h"
 
@@ -33,9 +33,15 @@ MODULE_LICENSE("Dual BSD/GPL");
 static int tinyld_major = 0;
 module_param(tinyld_major, int, 0);
 
-spinlock_t spinlock;
-struct ST_CHX002_FSBC_CONFIG gfsbcconfig;
-struct task_struct *fsbcdump_thread;
+/*
+struct task_struct *dump_thread;	
+while(!kthread_should_stop())
+{
+
+}			
+dump_thread = kthread_create(dump_kthreadfun,(void*)NULL,"dump");
+wake_up_process(dump_thread);
+*/
 
 static int tinyld_opend(struct inode *inode, struct file *filp)
 {
@@ -72,235 +78,20 @@ static int tinyld_remap_mmap(struct file *filp, struct vm_area_struct *vma)
 	return 0;
 }
 
-static int helper_fsbc_get_config(struct ST_CHX002_FSBC_CONFIG *fsbcconfig)
-{
-	uint32_t msr_eax;
-	uint32_t msr_edx;
-	uint64_t msr_data;
-    uint64_t offset = 0;
 
-	printk("fsbc wait for done\n"); 
-    while(1)
-    {
-	    rdmsr(0x160c, msr_eax, msr_edx);
-    	msr_data = msr_eax | ((uint64_t)msr_edx << 32);
- 	    if(GET_BIT(msr_data, 61)) // bit60
-	    {
-	    	fsbcconfig->isdone = 1;
-		    printk("fsbc is done!\n");
-            break;
-	    }
-    }
-    rdmsr(0x160c, msr_eax, msr_edx);
-	msr_data = msr_eax | ((uint64_t)msr_edx << 32);
-    printk("msr 0x160c is 0x%llx\n",msr_data);
-    fsbcconfig->iswrap = GET_BIT(msr_data,49); //bit 48
-    fsbcconfig->istriggerpattern = GET_BIT(msr_data,53);
-
-	fsbcconfig->base_iomem_addr = GET_BITS(msr_data,1,16) << 20;
-    printk("fsbc base addres 0x%llx\n",fsbcconfig->base_iomem_addr);
-    // spec msr show wrap offset base
-    offset = (uint64_t)GET_BITS(msr_data,17,32) << 20;
-	fsbcconfig->wrap_iomem_addr = fsbcconfig->base_iomem_addr + offset;
-    printk("fsbc wrap address 0x%llx\n",fsbcconfig->wrap_iomem_addr);
-    // spec show trigger offset base
-    offset = (uint64_t)GET_BITS(msr_data,33,48) << 20;
-	fsbcconfig->trigger_iomem_addr =fsbcconfig->base_iomem_addr + offset;
-    printk("fsbc trigger address 0x%llx\n",fsbcconfig->trigger_iomem_addr);
-    
-    //other msr
-	rdmsr(0x160b, msr_eax, msr_edx);
-    msr_data = msr_eax | ((uint64_t)msr_edx << 32);
-
-	fsbcconfig->position = GET_BITS(msr_data,45,47); // %?
-	switch(GET_BITS(msr_data,41,43))  //buffer size M uint
-	{
-		case 0:
-			fsbcconfig->buffersize = 256;
-			break;
-		case 1:
-			fsbcconfig->buffersize = 512;
-			break;
-		case 2:
-			fsbcconfig->buffersize = 1024;
-			break;
-		case 3:
-			fsbcconfig->buffersize = 2048;
-			break;
-		case 4:
-			fsbcconfig->buffersize = 4096;
-			break;
-		case 5:
-			fsbcconfig->buffersize = 8192;
-			break;
-		case 6:
-			fsbcconfig->buffersize = 0;
-		case 7:
-			fsbcconfig->buffersize = 8;
-			break;
-		default:
-			break;
-	}
-	
-	
-	return 0;
-}
-
-static int helper_fsbc_dump_kthreadfun(void *arg)
-{
-	struct file *fp;
-	mm_segment_t oldfs;
-	uint64_t offset = 0;
-	int err = 0;
-
-    uint64_t iomem_first_base_addr = 0;
-    uint64_t iomem_second_base_addr = 0;
-    uint64_t iomem_third_base_addr = 0; 
-    uint64_t iomem_end_addr = 0;
-
-	uint64_t first_len = 0;
-	uint64_t second_len = 0;
-	uint64_t third_len = 0;
-    
-	void* vir_first_base_addr = NULL;
-	void* vir_second_base_addr = NULL;
-	void* vir_third_base_addr = NULL;
-	//struct ST_CHX002_FSBC_CONFIG gfsbcconfig;
-	// fix 512M 75% wrap
-    /*
-    *
-    * top
-    * 3
-    * wrap addr
-    * 2
-    * trigger addr
-    * 1
-    * base addr
-    *
-    * 2+1+3
-    */
-    if(gfsbcconfig.istriggerpattern)
-    {
-        printk("fsbc is hit trigger pattern\n");    
-    }
-    printk("fsbc dump mem start!\n");
-    iomem_end_addr = gfsbcconfig.base_iomem_addr + gfsbcconfig.buffersize * 1024 * 1024; // dump end address = base + buffer size
-	//must triger mode not stream mode
-	if(gfsbcconfig.position == 0)  //snapshot mode
-	{
-		iomem_first_base_addr = gfsbcconfig.base_iomem_addr;
-		first_len = iomem_end_addr - iomem_first_base_addr;
-		vir_first_base_addr = ioremap_nocache(iomem_first_base_addr, first_len); 
-		oldfs = get_fs();
-		set_fs(get_ds()); // use kernel address KERNEL_DS
-		fp = filp_open("/home/mem.bin", O_RDWR | O_CREAT, 0644);
-		if(IS_ERR(fp))
-		{
-			err = PTR_ERR(fp);
-			printk("filp_open dump file fail\n");
-			return 1;
-		}
-		offset = 0;
-		printk("fsbc dump snapshot segment 0x%llx ~ 0x%llx\n", iomem_first_base_addr, iomem_end_addr);
-		vfs_write(fp,(unsigned char*)vir_first_base_addr, first_len*sizeof(char), &offset);
-		filp_close(fp, NULL);
-		set_fs(oldfs);
-		iounmap(vir_first_base_addr);
-		printk("fsbc dump memory finish, dump size is %lld M\n", first_len/1024/1024);
-	}
-	else
-	{
-		if(gfsbcconfig.iswrap)
-		{
-			printk("fsbc is wrap\n");
-			iomem_first_base_addr = gfsbcconfig.trigger_iomem_addr + 0x100000; //bug? need + 0x100000
-			iomem_second_base_addr = gfsbcconfig.base_iomem_addr;
-			iomem_third_base_addr =  gfsbcconfig.wrap_iomem_addr;
-			first_len = iomem_third_base_addr - iomem_first_base_addr;
-			second_len = iomem_first_base_addr - iomem_second_base_addr;
-			third_len = iomem_end_addr -  iomem_third_base_addr;
-			vir_first_base_addr = ioremap_nocache(iomem_first_base_addr, first_len);  // ioremap ioremap_cache   ioremap_nocache
-			vir_second_base_addr = ioremap_nocache(iomem_second_base_addr, second_len);
-			vir_third_base_addr = ioremap_nocache(iomem_third_base_addr, third_len);
-			oldfs = get_fs();
-			set_fs(get_ds()); // use kernel address KERNEL_DS
-			fp = filp_open("/home/mem.bin", O_RDWR | O_CREAT, 0644);
-			if(IS_ERR(fp))
-			{
-				err = PTR_ERR(fp);
-				printk("filp_open dump file fail\n");
-				return 1;
-			}
-			offset = 0;
-			printk("fsbc dump first segment 0x%llx ~ 0x%llx\n", iomem_first_base_addr, iomem_third_base_addr);
-			vfs_write(fp,(unsigned char*)vir_first_base_addr, first_len*sizeof(char), &offset);
-			offset += first_len;
-			printk("fsbc dump second segment 0x%llx ~ 0x%llx\n", iomem_second_base_addr, iomem_first_base_addr);
-			vfs_write(fp,(unsigned char*)vir_second_base_addr, second_len*sizeof(char), &offset);
-			offset += second_len;
-			printk("fsbc dump third segment 0x%llx ~ 0x%llx\n", iomem_third_base_addr, iomem_end_addr);
-			vfs_write(fp,(unsigned char*)vir_third_base_addr, third_len*sizeof(char), &offset);
-			filp_close(fp, NULL);
-			set_fs(oldfs);
-			iounmap(vir_first_base_addr);
-			iounmap(vir_second_base_addr);
-			iounmap(vir_third_base_addr);
-			printk("fsbc dump memory finish, dump size is %lld M!\n", (first_len + second_len + third_len)/1024/1024); 
-		}
-		else
-		{
-			printk("fsbc is not wrap\n");
-			iomem_first_base_addr = gfsbcconfig.base_iomem_addr;
-			iomem_second_base_addr = gfsbcconfig.trigger_iomem_addr + 0x100000; //fsbc design bug?
-			iomem_third_base_addr = gfsbcconfig.wrap_iomem_addr;
-			first_len = iomem_second_base_addr - iomem_first_base_addr;
-			second_len = iomem_end_addr - iomem_third_base_addr;
-			vir_first_base_addr = ioremap_nocache(iomem_first_base_addr, first_len);
-			vir_second_base_addr = ioremap_nocache(iomem_third_base_addr, second_len);
-			oldfs = get_fs();
-			set_fs(get_ds());
-			fp = filp_open("/home/mem.bin", O_RDWR | O_CREAT, 0644);
-			if(IS_ERR(fp))
-			{
-				err = PTR_ERR(fp);
-				printk("filp_open dump file fail\n");
-				return 1;
-			}
-			offset = 0;
-			printk("fsbc dump first segment 0x%llx ~ 0x%llx\n", iomem_first_base_addr, iomem_second_base_addr);
-			vfs_write(fp, (unsigned char*)vir_first_base_addr, first_len*sizeof(char), &offset);
-			offset += first_len;
-			printk("fsbc dump second segmeng 0x%llx ~ 0x%llx\n", iomem_third_base_addr, iomem_end_addr);
-			vfs_write(fp, (unsigned char*)vir_second_base_addr, second_len*sizeof(char), &offset);
-			filp_close(fp, NULL);
-			set_fs(oldfs);
-			iounmap(vir_first_base_addr);
-			iounmap(vir_second_base_addr);
-			printk("fsbc dump memory finish, dump size is %lld M\n", (first_len + second_len)/1024/1024);
-		}			
-	}
-	
-
-	
-	/*
-	while(!kthread_should_stop())
-	{
-	
-	}
-	*/
-	return 0;
-}
 
 long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
+	uint8_t *va;
+	uint64_t *va64;
+    uint64_t kk;
 	struct ST_DRX_REGISTER drx_register;
-	uint64_t drx = 0;
     struct ST_MSR_REGISTER msr_register;
     struct ST_IO_REGISTER io_register;
     struct ST_IOMEM_REGISTER iomem_register;
     void __iomem *iomemva;
+	uint64_t drx = 0;
 
-	spin_lock(&spinlock);
 		
 	switch(cmd)
 	{
@@ -308,7 +99,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	    {
 	        if(copy_from_user(&drx_register, (void __user *)arg, sizeof(struct ST_DRX_REGISTER)))
 	        {	
-		        spin_unlock(&spinlock);
 		        printk(KERN_NOTICE "fun: copy_from_user error! \n");
 		        return 1;
 	        }
@@ -378,7 +168,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             }
 	        if(copy_to_user((void __user*)arg, &drx_register,sizeof(struct ST_DRX_REGISTER)))
 	        {
-		        spin_unlock(&spinlock);
 		        printk("fun: copy_to_user is error! \n");
 		        return 1;
 	        }
@@ -390,7 +179,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         {
 	        if(copy_from_user(&msr_register, (void __user *)arg, sizeof(struct ST_MSR_REGISTER)))
 	        {	
-		        spin_unlock(&spinlock);
 		        printk(KERN_NOTICE "fun: copy_from_user error! \n");
 		        return 1;
 	        }
@@ -398,7 +186,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             printk("rdmsr: msr is 0x%x, high is 0x%x, low is 0x%x\n",msr_register.ecx, msr_register.edx, msr_register.eax);
 	        if(copy_to_user((void __user*)arg, &msr_register,sizeof(struct ST_MSR_REGISTER)))
 	        {
-		        spin_unlock(&spinlock);
 		        printk("fun: copy_to_user is error! \n");
 		        return 1;
 	        }
@@ -409,7 +196,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         {
 	        if(copy_from_user(&msr_register, (void __user *)arg, sizeof(struct ST_MSR_REGISTER)))
 	        {	
-		        spin_unlock(&spinlock);
 		        printk(KERN_NOTICE "fun: copy_from_user error! \n");
 		        return 1;
 	        }
@@ -418,7 +204,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             printk("wrmsr: msr is 0x%x, high is 0x%x, low is 0x%x\n",msr_register.ecx, msr_register.edx, msr_register.eax);
 	        if(copy_to_user((void __user*)arg, &msr_register,sizeof(struct ST_MSR_REGISTER)))
 	        {
-		        spin_unlock(&spinlock);
 		        printk("fun: copy_to_user is error! \n");
 		        return 1;
 	        }
@@ -429,7 +214,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         {
 	        if(copy_from_user(&io_register, (void __user *)arg, sizeof(struct ST_IO_REGISTER)))
 	        {	
-		        spin_unlock(&spinlock);
 		        printk(KERN_NOTICE "fun: copy_from_user error! \n");
 		        return 1;
 	        }
@@ -437,7 +221,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             printk("ior: io is 0x%x, data is  0x%x\n",io_register.io, io_register.data);
 	        if(copy_to_user((void __user*)arg, &io_register,sizeof(struct ST_IO_REGISTER)))
 	        {
-		        spin_unlock(&spinlock);
 		        printk("fun: copy_to_user is error! \n");
 		        return 1;
 	        }
@@ -447,7 +230,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         {
 	        if(copy_from_user(&io_register, (void __user *)arg, sizeof(struct ST_IO_REGISTER)))
 	        {	
-		        spin_unlock(&spinlock);
 		        printk(KERN_NOTICE "fun: copy_from_user error! \n");
 		        return 1;
 	        }
@@ -456,7 +238,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             printk("iow: io is 0x%x, data is  0x%x\n",io_register.io, io_register.data);
 	        if(copy_to_user((void __user*)arg, &io_register,sizeof(struct ST_IO_REGISTER)))
 	        {
-		        spin_unlock(&spinlock);
 		        printk("fun: copy_to_user is error! \n");
 		        return 1;
 	        }
@@ -466,7 +247,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         {
 	        if(copy_from_user(&iomem_register, (void __user *)arg, sizeof(struct ST_IOMEM_REGISTER)))
 	        {	
-		        spin_unlock(&spinlock);
 		        printk(KERN_NOTICE "fun: copy_from_user error! \n");
 		        return 1;
 	        }
@@ -476,7 +256,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             printk("iomemrb: iomem is 0x%llx, bdata is  0x%x\n",iomem_register.iomem, iomem_register.bdata);
 	        if(copy_to_user((void __user*)arg, &iomem_register,sizeof(struct ST_IOMEM_REGISTER)))
 	        {
-		        spin_unlock(&spinlock);
 		        printk("fun: copy_to_user is error! \n");
 		        return 1;
 	        }
@@ -486,7 +265,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         {
 	        if(copy_from_user(&iomem_register, (void __user *)arg, sizeof(struct ST_IOMEM_REGISTER)))
 	        {	
-		        spin_unlock(&spinlock);
 		        printk(KERN_NOTICE "fun: copy_from_user error! \n");
 		        return 1;
 	        }
@@ -497,7 +275,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             printk("iomemwb: iomem is 0x%llx, bdata is  0x%x\n",iomem_register.iomem, iomem_register.bdata);
 	        if(copy_to_user((void __user*)arg, &iomem_register,sizeof(struct ST_IOMEM_REGISTER)))
 	        {
-		        spin_unlock(&spinlock);
 		        printk("fun: copy_to_user is error! \n");
 		        return 1;
 	        }
@@ -507,7 +284,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         {
 	        if(copy_from_user(&iomem_register, (void __user *)arg, sizeof(struct ST_IOMEM_REGISTER)))
 	        {	
-		        spin_unlock(&spinlock);
 		        printk(KERN_NOTICE "fun: copy_from_user error! \n");
 		        return 1;
 	        }
@@ -517,7 +293,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             printk("iomemrw: iomem is 0x%llx, wdata is  0x%x\n",iomem_register.iomem, iomem_register.wdata);
 	        if(copy_to_user((void __user*)arg, &iomem_register,sizeof(struct ST_IOMEM_REGISTER)))
 	        {
-		        spin_unlock(&spinlock);
 		        printk("fun: copy_to_user is error! \n");
 		        return 1;
 	        }
@@ -527,7 +302,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         {
 	        if(copy_from_user(&iomem_register, (void __user *)arg, sizeof(struct ST_IOMEM_REGISTER)))
 	        {	
-		        spin_unlock(&spinlock);
 		        printk(KERN_NOTICE "fun: copy_from_user error! \n");
 		        return 1;
 	        }
@@ -538,7 +312,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             printk("iomemww: iomem is 0x%llx, wdata is  0x%x\n",iomem_register.iomem, iomem_register.wdata);
 	        if(copy_to_user((void __user*)arg, &iomem_register,sizeof(struct ST_IOMEM_REGISTER)))
 	        {
-		        spin_unlock(&spinlock);
 		        printk("fun: copy_to_user is error! \n");
 		        return 1;
 	        }
@@ -548,7 +321,6 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         {
 	        if(copy_from_user(&iomem_register, (void __user *)arg, sizeof(struct ST_IOMEM_REGISTER)))
 	        {	
-		        spin_unlock(&spinlock);
 		        printk(KERN_NOTICE "fun: copy_from_user error! \n");
 		        return 1;
 	        }
@@ -558,46 +330,118 @@ long tinyld_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             printk("iomemrd: iomem is 0x%llx, ddata is  0x%x\n",iomem_register.iomem, iomem_register.ddata);
 	        if(copy_to_user((void __user*)arg, &iomem_register,sizeof(struct ST_IOMEM_REGISTER)))
 	        {
-		        spin_unlock(&spinlock);
 		        printk("fun: copy_to_user is error! \n");
 		        return 1;
 	        }
             break;
         }
-        case TINYLD_IOMEMWD:
+		case TINYLD_IOMEMWD:
         {
 	        if(copy_from_user(&iomem_register, (void __user *)arg, sizeof(struct ST_IOMEM_REGISTER)))
 	        {	
-		        spin_unlock(&spinlock);
 		        printk(KERN_NOTICE "fun: copy_from_user error! \n");
 		        return 1;
 	        }
-            iomemva = ioremap(iomem_register.iomem, 4*sizeof(char));
+            iomemva = (uint64_t *)ioremap(iomem_register.iomem, 4*sizeof(char));
             writel(iomem_register.ddata,iomemva);
             iomem_register.ddata = readl(iomemva);
             iounmap(iomemva);
-            printk("iomemwd: iomem is 0x%llx, ddata is  0x%x\n",iomem_register.iomem, iomem_register.ddata);
+            printk("iomemww: iomem is 0x%llx, ddata is  0x%x\n",iomem_register.iomem, iomem_register.ddata);
 	        if(copy_to_user((void __user*)arg, &iomem_register,sizeof(struct ST_IOMEM_REGISTER)))
 	        {
-		        spin_unlock(&spinlock);
 		        printk("fun: copy_to_user is error! \n");
 		        return 1;
 	        }
             break;
         }
-	
-		case TINYLD_CHX002_FSBC_DUMP_IOMEM:
+        case TINYLD_IOMEMWQ:
+        {
+	        if(copy_from_user(&iomem_register, (void __user *)arg, sizeof(struct ST_IOMEM_REGISTER)))
+	        {	
+		        printk(KERN_NOTICE "fun: copy_from_user error! \n");
+		        return 1;
+	        }
+            va64 = ioremap(iomem_register.iomem, 8*sizeof(char));
+            *va64 = iomem_register.qdata;
+            iomem_register.qdata = *va64;
+            iounmap(va64);
+            printk("iomemwq: iomem is 0x%llx, qdata is  0x%llx\n",iomem_register.iomem, iomem_register.qdata);
+	        if(copy_to_user((void __user*)arg, &iomem_register,sizeof(struct ST_IOMEM_REGISTER)))
+	        {
+		        printk("fun: copy_to_user is error! \n");
+		        return 1;
+	        }
+            break;
+        }
+		case TINYLD_IOMEMRQ:
+        {
+	        if(copy_from_user(&iomem_register, (void __user *)arg, sizeof(struct ST_IOMEM_REGISTER)))
+	        {	
+		        printk(KERN_NOTICE "fun: copy_from_user error! \n");
+		        return 1;
+	        }
+            va64 = ioremap(iomem_register.iomem, 8*sizeof(char));
+            iomem_register.qdata = *va64;
+            iounmap(va64);
+            printk("iomemwq: iomem is 0x%llx, qdata is  0x%llx\n",iomem_register.iomem, iomem_register.qdata);
+	        if(copy_to_user((void __user*)arg, &iomem_register,sizeof(struct ST_IOMEM_REGISTER)))
+	        {
+		        printk("fun: copy_to_user is error! \n");
+		        return 1;
+	        }
+            break;
+        }
+		case TINYLD_IOMEMR4K:
 		{
-			helper_fsbc_get_config(&gfsbcconfig);
-			fsbcdump_thread = kthread_create(helper_fsbc_dump_kthreadfun,(void*)NULL,"fsbc_dump");
-			wake_up_process(fsbcdump_thread);		
+			if (copy_from_user(&iomem_register, (void __user *)arg, sizeof(struct ST_IOMEM_REGISTER)))
+			{
+				printk(KERN_NOTICE "fun: copy_from_user error! \n");
+				return -1;
+			}
+			va = (uint8_t *)ioremap(iomem_register.iomem, 0x1000);
+			for (kk = 0; kk < 0x1000; kk++)
+			{
+				iomem_register.data4k[kk] = readb(&va[kk]);
+			}
+			iounmap(va);
+			if (copy_to_user((void __user *)arg, &iomem_register, sizeof(struct ST_IOMEM_REGISTER)))
+			{
+				printk("fun: copy_to_user is error! \n");
+				return -1;
+			}
+
 			break;
 		}
+		case TINYLD_IOMEMW4k:
+		{
+			if (copy_from_user(&iomem_register, (void __user *)arg, sizeof(struct ST_IOMEM_REGISTER)))
+			{
+				printk(KERN_NOTICE "fun: copy_from_user error! \n");
+				return -1;
+			}
+			//write
+			va = (uint8_t *)ioremap(iomem_register.iomem, 0x1000);
+			for (kk = 0; kk < 0x1000; kk++)
+			{
+				writeb(iomem_register.data4k[kk], &va[kk]);
+			}
+			//read
+			for (kk = 0; kk < 0x1000; kk++)
+			{
+				iomem_register.data4k[kk] = readb(&va[kk]);
+			}
+			iounmap(va);
+			if (copy_to_user((void __user *)arg, &iomem_register, sizeof(struct ST_IOMEM_REGISTER)))
+			{
+				printk("fun: copy_to_user is error! \n");
+				return -1;
+			}
+			break;
+		}	
 
         default:
             break;
 	}
-	spin_unlock(&spinlock);
 	return 0;
 }
 
@@ -654,7 +498,6 @@ static int tinyld_init(void)
 	tinyld_setup_cdev(tinyldDevs, 0, &tinyld_remap_ops);
 	device_create(my_class, NULL, dev,NULL, "tinyld");
 	printk(KERN_NOTICE "tinyld init \n");
-	spin_lock_init(&spinlock);
 
 
 	return 0;

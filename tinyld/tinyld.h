@@ -7,15 +7,18 @@
 #define TINYLD_WRMSR _IO(TINYLD_MAGIC,3)
 #define TINYLD_IOWB _IO(TINYLD_MAGIC,4)
 #define TINYLD_IORB _IO(TINYLD_MAGIC,5)
-#define TINYLD_IOMEMWB _IO(TINYLD_MAGIC,6) //8
+#define TINYLD_IOMEMWB _IO(TINYLD_MAGIC,6) //1 byte
 #define TINYLD_IOMEMRB _IO(TINYLD_MAGIC,7)
-#define TINYLD_IOMEMWW _IO(TINYLD_MAGIC,8) //16
+#define TINYLD_IOMEMWW _IO(TINYLD_MAGIC,8) //1 word
 #define TINYLD_IOMEMRW _IO(TINYLD_MAGIC,9)
-#define TINYLD_IOMEMWD _IO(TINYLD_MAGIC,10) //32
+#define TINYLD_IOMEMWD _IO(TINYLD_MAGIC,10) //2 word
 #define TINYLD_IOMEMRD _IO(TINYLD_MAGIC,11)
-#define TINYLD_DR_WRITE _IO(TINYLD_MAGIC,13)
+#define TINYLD_IOMEMRQ _IO(TINYLD_MAGIC,12) // 4 word
+#define TINYLD_IOMEMWQ _IO(TINYLD_MAGIC,13)
+#define TINYLD_IOMEMR4K _IO(TINYLD_MAGIC,14) // 4096 byte
+#define TINYLD_IOMEMW4k _IO(TINYLD_MAGIC,15)
+#define TINYLD_DR_WRITE _IO(TINYLD_MAGIC,16)
 
-#define TINYLD_CHX002_FSBC_DUMP_IOMEM _IO(TINYLD_MAGIC,30)
 
 #define SET_BIT(x,n) (x | 1llu<<(n-1llu)) // set (n-1) to 1
 #define CLEAR_BIT(x,n) (x & ~(1llu<<(n-1llu)))
@@ -91,30 +94,11 @@ struct ST_IOMEM_REGISTER
     uint8_t  bdata; // 8
     uint16_t wdata; // 16
     uint32_t ddata; // 32
+	uint64_t qdata; //64
+	uint8_t  data4k[4096];
 };
 
-struct ST_CHX002_FSBC_REGISTER
-{
-	struct ST_MSR_REGISTER data0_1604;
-	struct ST_MSR_REGISTER data1_1605;
-	struct ST_MSR_REGISTER data2_1606;
-	struct ST_MSR_REGISTER data3_1607;
-	struct ST_MSR_REGISTER datamask_1608;
-	struct ST_MSR_REGISTER req_1609;
-	struct ST_MSR_REGISTER cnt_160a;
-	struct ST_MSR_REGISTER ini_160b;
-	struct ST_MSR_REGISTER result_160c;
-	
-};
-struct ST_CHX002_FSBC_CONFIG
-{
-	uint8_t isdone;
-	uint8_t iswrap;
-	uint8_t istriggerpattern;
-	uint64_t base_iomem_addr; //base
-	uint64_t wrap_iomem_addr; //base + len*ratio offset
-	uint64_t trigger_iomem_addr; //base + random offset
-	uint64_t buffersize; //M uint
-	uint8_t position;
-};
+
+
+
 #endif
